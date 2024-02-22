@@ -40,7 +40,7 @@ func init() {
 	d := gob.NewDecoder(r)
 
 	d.Decode(&tmpChannelCreators)
-	d.Decode(&tmpChannels)
+	// d.Decode(&tmpChannels)
 
 }
 
@@ -292,9 +292,9 @@ func main() {
 	// for ch := range tmpChannelCreators {
 	// 	sess.ChannelDelete(ch)
 	// }
-	// for ch := range tmpChannels {
-	// 	sess.ChannelDelete(ch)
-	// }
+	for ch := range tmpChannels {
+		sess.ChannelDelete(ch)
+	}
 
 	// dump channel info into a db.gob file
 
@@ -306,10 +306,10 @@ func main() {
 		log.Panicf("could not serialize tmpChannelCreators: %v", err)
 	}
 
-	err = e.Encode(tmpChannels)
-	if err != nil {
-		log.Panicf("could not serialize tmpChannels: %v", err)
-	}
+	// err = e.Encode(tmpChannels)
+	// if err != nil {
+	// 	log.Panicf("could not serialize tmpChannels: %v", err)
+	// }
 
 	db, err := os.Create("db.gob")
 	if err != nil {
