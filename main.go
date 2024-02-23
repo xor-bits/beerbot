@@ -22,8 +22,14 @@ type Creator struct {
 	Limit int64
 }
 
+type Temporary struct {
+	Name  string
+	Nth   uint64
+	Limit int64
+}
+
 var tmpChannelCreators = map[string]*Creator{}
-var tmpChannels = map[string]bool{}
+var tmpChannels = map[string]*Temporary{}
 
 func init() {
 	var err error
@@ -130,6 +136,168 @@ var (
 			})
 		},
 
+		"name": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			ch, ok := tmpChannels[i.ChannelID]
+			if !ok {
+				log.Printf("no name given")
+				return
+			}
+
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseModal,
+				Data: &discordgo.InteractionResponseData{
+					CustomID: "modals_name",
+					Title:    "Set name",
+					Components: []discordgo.MessageComponent{
+						discordgo.ActionsRow{
+							Components: []discordgo.MessageComponent{
+								discordgo.TextInput{
+									CustomID:    "name",
+									Label:       "New channel name",
+									Style:       discordgo.TextInputShort,
+									Value:       ch.Name,
+									Placeholder: "required",
+									MinLength:   3,
+									MaxLength:   20,
+								},
+							},
+						},
+					},
+				},
+			})
+			if err != nil {
+				log.Printf("failed to create a modal: %v", err)
+			}
+		},
+
+		"modals_name": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			ch, ok := tmpChannels[i.ChannelID]
+			if !ok {
+				return
+			}
+
+			data := i.ModalSubmitData()
+
+			ch.Name = data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
+			_, err := s.ChannelEdit(i.ChannelID, &discordgo.ChannelEdit{
+				Name: fmt.Sprintf("%s #%03v", ch.Name, ch.Limit),
+			})
+			if err != nil {
+				log.Printf("failed to edit a tmp channel: %v", err)
+				return
+			}
+
+			// err = s.MessageReactionAdd(i.Message.ChannelID, i.Message.ID, "👍")
+			err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "new channel name set",
+				},
+			})
+			if err != nil {
+				log.Printf("failed to send the response: %v", err)
+				return
+			}
+		},
+
+		"kick": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			_, ok := tmpChannels[i.ChannelID]
+			if !ok {
+				log.Printf("no name given")
+				return
+			}
+
+			min := 1
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					CustomID: "modals_kick",
+					Title:    "Kick someone",
+					Flags:    discordgo.MessageFlagsEphemeral,
+					Components: []discordgo.MessageComponent{
+						discordgo.ActionsRow{
+							Components: []discordgo.MessageComponent{
+								discordgo.SelectMenu{
+									CustomID:  "kick",
+									MenuType:  discordgo.UserSelectMenu,
+									MinValues: &min,
+								},
+							},
+						},
+					},
+				},
+			})
+			if err != nil {
+				log.Printf("failed to create a modal: %v", err)
+			}
+		},
+
+		"modals_kick": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			_, ok := tmpChannels[i.ChannelID]
+			if !ok {
+				return
+			}
+
+			data := i.ModalSubmitData()
+
+			values := data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.SelectMenu).Options
+
+			for _, val := range values {
+				err := s.GuildMemberMove(i.GuildID, val.Value, nil)
+				if err != nil {
+					log.Printf("failed to kick: %v", err)
+				}
+			}
+
+			// err = s.MessageReactionAdd(i.Message.ChannelID, i.Message.ID, "👍")
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "intruder kicked",
+				},
+			})
+			if err != nil {
+				log.Printf("failed to send the response: %v", err)
+				return
+			}
+		},
+
+		"clear": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "TODO",
+				},
+			})
+		},
+
+		"limit": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "TODO",
+				},
+			})
+		},
+
+		"ban": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "TODO",
+				},
+			})
+		},
+
+		"give": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "TODO",
+				},
+			})
+		},
+
 		"status": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -160,9 +328,81 @@ func spawnerChannelUpdate(s *discordgo.Session, vc *discordgo.VoiceStateUpdate, 
 		return
 	}
 
-	s.ChannelMessageSend(ch.ID, fmt.Sprintf("hello there <@%s>", vc.UserID))
+	_, err = s.ChannelMessageSendComplex(ch.ID, &discordgo.MessageSend{
+		Content: fmt.Sprintf("**TMPCH SETTINGS** for <@%s> **CHANNEL**", vc.UserID),
+		TTS:     false,
+		Embeds:  []*discordgo.MessageEmbed{},
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Set name",
+						CustomID: "name",
+						Emoji: discordgo.ComponentEmoji{
+							Name:     "📝",
+							Animated: false,
+						},
+					},
+					discordgo.Button{
+						Label:    "Kick user",
+						CustomID: "kick",
+						Style:    discordgo.SecondaryButton,
+						Emoji: discordgo.ComponentEmoji{
+							Name:     "🚫",
+							Animated: false,
+						},
+					},
+					discordgo.Button{
+						Label:    "Clean chat",
+						CustomID: "clear",
+						Emoji: discordgo.ComponentEmoji{
+							Name:     "🧹",
+							Animated: false,
+						},
+					},
+				},
+			},
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Set limit",
+						CustomID: "limit",
+						Emoji: discordgo.ComponentEmoji{
+							Name:     "🎚️",
+							Animated: false,
+						},
+					},
+					discordgo.Button{
+						Label:    "Ban user",
+						CustomID: "ban",
+						Style:    discordgo.DangerButton,
+						Emoji: discordgo.ComponentEmoji{
+							Name:     "⛔",
+							Animated: false,
+						},
+					},
+					discordgo.Button{
+						Label:    "Give channel",
+						CustomID: "give",
+						Emoji: discordgo.ComponentEmoji{
+							Name:     "👑",
+							Animated: false,
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		log.Printf("failed to send the tmp channel msg: %v", err)
+	}
+	// s.ChannelMessageSend(ch.ID, fmt.Sprintf("hello there <@%s>", vc.UserID))
 
-	tmpChannels[ch.ID] = true
+	tmpChannels[ch.ID] = &Temporary{
+		Name:  creator.Name,
+		Nth:   n,
+		Limit: creator.Limit,
+	}
 }
 
 func tmpChannelUpdate(s *discordgo.Session, vc *discordgo.VoiceStateUpdate) {
@@ -204,8 +444,22 @@ func init() {
 
 func init() {
 	sess.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if handler, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
-			handler(s, i)
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			log.Printf("cmd %s", i.ApplicationCommandData().Name)
+			if handler, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
+				handler(s, i)
+			}
+		case discordgo.InteractionMessageComponent:
+			log.Printf("comp %s", i.MessageComponentData().CustomID)
+			if handler, ok := commandHandlers[i.MessageComponentData().CustomID]; ok {
+				handler(s, i)
+			}
+		case discordgo.InteractionModalSubmit:
+			log.Printf("modal %s", i.ModalSubmitData().CustomID)
+			if handler, ok := commandHandlers[i.ModalSubmitData().CustomID]; ok {
+				handler(s, i)
+			}
 		}
 	})
 
@@ -232,18 +486,18 @@ func init() {
 	})
 
 	sess.AddHandler(func(s *discordgo.Session, m *discordgo.VoiceStateUpdate) {
-		dbg_log := "voice state update"
-		if m.VoiceState != nil {
-			dbg_log = fmt.Sprintf("%s new:%#v", dbg_log, m.VoiceState)
-		} else {
-			dbg_log = fmt.Sprintf("%s new:nil", dbg_log)
-		}
-		if m.BeforeUpdate != nil {
-			dbg_log = fmt.Sprintf("%s old:%#v", dbg_log, m.BeforeUpdate)
-		} else {
-			dbg_log = fmt.Sprintf("%s old:nil", dbg_log)
-		}
-		log.Printf("%s", dbg_log)
+		// dbg_log := "voice state update"
+		// if m.VoiceState != nil {
+		// 	dbg_log = fmt.Sprintf("%s new:%#v", dbg_log, m.VoiceState)
+		// } else {
+		// 	dbg_log = fmt.Sprintf("%s new:nil", dbg_log)
+		// }
+		// if m.BeforeUpdate != nil {
+		// 	dbg_log = fmt.Sprintf("%s old:%#v", dbg_log, m.BeforeUpdate)
+		// } else {
+		// 	dbg_log = fmt.Sprintf("%s old:nil", dbg_log)
+		// }
+		// log.Printf("%s", dbg_log)
 
 		if m.Member == nil {
 			return
