@@ -131,35 +131,58 @@ var (
 		},
 
 		"status": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			options := i.ApplicationCommandData().Options
-
-			optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))
-			for _, opt := range options {
-				optionMap[opt.Name] = opt
-			}
-
-			if opt, ok := optionMap["status"]; ok {
-				s.UpdateStatusComplex(discordgo.UpdateStatusData{
-					Status: "online",
-					Activities: []*discordgo.Activity{
-						{
-							Name:  "Custom Status",
-							Type:  discordgo.ActivityTypeCustom,
-							State: opt.StringValue(),
-						},
-					},
-				})
-			}
-
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
-					Content: "done",
+					Content: "nice try",
 				},
 			})
 		},
 	}
 )
+
+func spawnerChannelUpdate(s *discordgo.Session, vc *discordgo.VoiceStateUpdate, creator *Creator) {
+	n := creator.Nth
+	creator.Nth += 1
+	ch, err := s.GuildChannelCreateComplex(vc.GuildID, discordgo.GuildChannelCreateData{
+		Name:      fmt.Sprintf("%s #%03d", creator.Name, n),
+		Type:      discordgo.ChannelTypeGuildVoice,
+		UserLimit: int(creator.Limit),
+	})
+	if err != nil {
+		log.Printf("failed to create a channel: %v", err)
+		return
+	}
+
+	err = s.GuildMemberMove(vc.GuildID, vc.UserID, &ch.ID)
+	if err != nil {
+		log.Printf("failed to move the user: %v", err)
+		return
+	}
+
+	s.ChannelMessageSend(ch.ID, fmt.Sprintf("hello there <@%s>", vc.UserID))
+
+	tmpChannels[ch.ID] = true
+}
+
+func tmpChannelUpdate(s *discordgo.Session, vc *discordgo.VoiceStateUpdate) {
+	if vc.ChannelID != vc.BeforeUpdate.ChannelID {
+		ch, err := s.Channel(vc.BeforeUpdate.ChannelID)
+		if err != nil {
+			log.Printf("failed to get user count: %v", err)
+			return
+		}
+		if ch.MemberCount == 0 {
+			_, err := s.ChannelDelete(vc.BeforeUpdate.ChannelID)
+			if err != nil {
+				log.Printf("failed to delete the channel: %v", err)
+				return
+			}
+			delete(tmpChannels, vc.ChannelID)
+
+		}
+	}
+}
 
 var sess *discordgo.Session
 
@@ -209,55 +232,34 @@ func init() {
 	})
 
 	sess.AddHandler(func(s *discordgo.Session, m *discordgo.VoiceStateUpdate) {
-		// log.Printf("voice state update %#v", m.VoiceState)
+		dbg_log := "voice state update"
+		if m.VoiceState != nil {
+			dbg_log = fmt.Sprintf("%s new:%#v", dbg_log, m.VoiceState)
+		} else {
+			dbg_log = fmt.Sprintf("%s new:nil", dbg_log)
+		}
+		if m.BeforeUpdate != nil {
+			dbg_log = fmt.Sprintf("%s old:%#v", dbg_log, m.BeforeUpdate)
+		} else {
+			dbg_log = fmt.Sprintf("%s old:nil", dbg_log)
+		}
+		log.Printf("%s", dbg_log)
+
 		if m.Member == nil {
 			return
 		}
 
-		if ch_name, ok := tmpChannelCreators[m.ChannelID]; ok {
-			n := ch_name.Nth
-			ch_name.Nth += 1
-			ch, err := s.GuildChannelCreateComplex(m.GuildID, discordgo.GuildChannelCreateData{
-				Name:      fmt.Sprintf("%s #%03d", ch_name.Name, n),
-				Type:      discordgo.ChannelTypeGuildVoice,
-				UserLimit: int(ch_name.Limit),
-			})
-			if err != nil {
-				log.Printf("failed to create a channel: %v", err)
-				return
-			}
-
-			err = s.GuildMemberMove(m.GuildID, m.UserID, &ch.ID)
-			if err != nil {
-				log.Printf("failed to move the user: %v", err)
-				return
-			}
-
-			s.ChannelMessageSend(ch.ID, fmt.Sprintf("hello there <@%s>", m.UserID))
-
-			tmpChannels[ch.ID] = true
+		if creator, ok := tmpChannelCreators[m.ChannelID]; ok {
+			spawnerChannelUpdate(s, m, creator)
 		}
 
 		if m.BeforeUpdate != nil {
 			if _, ok := tmpChannels[m.BeforeUpdate.ChannelID]; ok {
-				if m.ChannelID != m.BeforeUpdate.ChannelID {
-					ch, err := s.Channel(m.BeforeUpdate.ChannelID)
-					if err != nil {
-						log.Printf("failed to get user count: %v", err)
-						return
-					}
-					if ch.MemberCount == 0 {
-						_, err := s.ChannelDelete(m.BeforeUpdate.ChannelID)
-						if err != nil {
-							log.Printf("failed to delete the channel: %v", err)
-							return
-						}
-						delete(tmpChannels, m.ChannelID)
-
-					}
-				}
+				tmpChannelUpdate(s, m)
 			}
 
+		} else if _, ok := tmpChannels[m.ChannelID]; ok {
+			// idk
 		}
 	})
 }
@@ -292,12 +294,14 @@ func main() {
 	// for ch := range tmpChannelCreators {
 	// 	sess.ChannelDelete(ch)
 	// }
+	log.Printf("closing tmpChannels")
 	for ch := range tmpChannels {
 		sess.ChannelDelete(ch)
 	}
 
 	// dump channel info into a db.gob file
 
+	log.Printf("saving tmpChannelCreators")
 	b := new(bytes.Buffer)
 	e := gob.NewEncoder(b)
 
